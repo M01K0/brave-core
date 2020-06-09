@@ -7,12 +7,11 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/time/time.h"
 #include "bat/ledger/internal/api/api_parameters.h"
+#include "bat/ledger/internal/common/time_util.h"
 #include "bat/ledger/internal/ledger_impl.h"
 #include "bat/ledger/internal/request/request_api.h"
 #include "bat/ledger/internal/state/state_util.h"
-#include "brave_base/random.h"
 #include "net/http/http_status_code.h"
 
 using std::placeholders::_1;
@@ -95,12 +94,6 @@ void APIParameters::Initialize() {
   }
 }
 
-void APIParameters::OnTimer(const uint32_t timer_id) {
-  if (timer_id == refresh_timer_id_) {
-    Fetch();
-  }
-}
-
 void APIParameters::Fetch() {
   Fetch([](ledger::RewardsParametersPtr) {});
 }
@@ -113,7 +106,7 @@ void APIParameters::Fetch(ledger::GetRewardsParametersCallback callback) {
     return;
   }
 
-  refresh_timer_id_ = 0;
+  refresh_timer_.Stop();
 
   auto url_callback = std::bind(&APIParameters::OnFetch,
       this,
@@ -128,7 +121,7 @@ void APIParameters::OnFetch(const ledger::UrlResponse& response) {
 
   if (response.status_code != net::HTTP_OK) {
     RunCallbacks();
-    SetRefreshTimer(brave_base::random::Geometric(90));
+    SetRefreshTimer(base::TimeDelta::FromSeconds(90));
     return;
   }
 
@@ -137,14 +130,15 @@ void APIParameters::OnFetch(const ledger::UrlResponse& response) {
   if (result != ledger::Result::LEDGER_OK) {
     BLOG(1, "Couldn't parse response");
     RunCallbacks();
-    SetRefreshTimer(
-        brave_base::random::Geometric(10 * base::Time::kSecondsPerMinute));
+    SetRefreshTimer(base::TimeDelta::FromMinutes(10));
     return;
   }
 
   braveledger_state::SetRewardsParameters(ledger_, parameters);
   RunCallbacks();
-  SetRefreshTimer();
+  SetRefreshTimer(
+      base::TimeDelta::FromMinutes(10),
+      base::TimeDelta::FromHours(3));
 }
 
 void APIParameters::RunCallbacks() {
@@ -160,23 +154,25 @@ void APIParameters::RunCallbacks() {
   }
 }
 
-void APIParameters::SetRefreshTimer(const int delay) {
-  if (refresh_timer_id_ != 0) {
+void APIParameters::SetRefreshTimer(
+    base::TimeDelta delay,
+    base::TimeDelta base_delay) {
+  if (refresh_timer_.IsRunning()) {
     BLOG(1, "Params timer in progress");
     return;
   }
 
-  int64_t start_in = delay;
-  if (delay == 0) {
-    const int64_t base_delay = 3 * base::Time::kSecondsPerHour;
-    const int64_t random_delay =
-        brave_base::random::Geometric(10 * base::Time::kSecondsPerMinute);
-    start_in = base_delay + random_delay;
-  }
+  base::TimeDelta start_in =
+      base_delay + braveledger_time_util::GetRandomizedDelay(delay);
 
-  BLOG(1, "Params timer start in " << start_in);
+  BLOG(1, "Params timer set for " << start_in);
 
-  ledger_->SetTimer(start_in, &refresh_timer_id_);
+  refresh_timer_.Start(FROM_HERE, start_in,
+      base::BindOnce(&APIParameters::OnTimerElapsed, base::Unretained(this)));
+}
+
+void APIParameters::OnTimerElapsed() {
+  Fetch();
 }
 
 

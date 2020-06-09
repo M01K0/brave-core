@@ -267,8 +267,6 @@ struct ServerPublisherInfo {
 struct TransferFee {
   string id;
   double amount;
-  uint64 execution_timestamp;
-  uint32 execution_id;
 };
 
 enum RewardsType {
