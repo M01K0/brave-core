@@ -46,6 +46,8 @@ source_set("switches") {
 }
 
 source_set("common") {
+  # Remove when https://github.com/brave/brave-browser/issues/10653 is resolved
+  check_includes = false
   deps = []
 
   sources = [
@@ -123,6 +125,7 @@ source_set("shield_exceptions") {
 
   deps = [
     "//brave/extensions:common",
+    "//extensions/common:common",
     "//url",
   ]
 }
